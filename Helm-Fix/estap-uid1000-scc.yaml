@@ -1,0 +1,39 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: estap-uid1000
+allowPrivilegedContainer: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostIPC: false
+readOnlyRootFilesystem: true
+allowHostPorts: false
+allowPrivilegeEscalation: false
+requiredDropCapabilities:
+  - ALL
+allowedCapabilities: []
+defaultAddCapabilities: []
+seLinuxContext:
+  type: MustRunAs     # let OCP assign an SELinux label; we don't loosen it
+runAsUser:
+  type: MustRunAs
+  uid: 1000
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 1000
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 1000
+volumes:
+  - configMap
+  - emptyDir
+  - projected
+  - secret
+  - downwardAPI
+  - persistentVolumeClaim
+seccompProfiles:
+  - runtime/default

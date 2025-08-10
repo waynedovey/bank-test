@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-tap
+  namespace: bank-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: tcp-tap }
+  template:
+    metadata:
+      labels: { app: tcp-tap }
+    spec:
+      containers:
+      - name: socat
+        image: alpine/socat:1.8.0.0
+        # Listens on 9999, logs payload to stdout, forwards to E-STAP svc:8888
+        # -v/-x print traffic; adjust ESTAP_HOST if your service name differs
+        env:
+        - name: ESTAP_HOST
+          value: estap-estap-lb
+        command: ["/bin/sh","-lc"]
+        args:
+          - |
+            socat -v -x TCP-LISTEN:9999,reuseaddr,fork TCP:${ESTAP_HOST}:8888
+        ports:
+        - name: tap
+          containerPort: 9999
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-tap
+  namespace: bank-test
+spec:
+  selector: { app: tcp-tap }
+  ports:
+  - name: tap
+    port: 9999
+    targetPort: 9999
+    protocol: TCP
+  type: ClusterIP
