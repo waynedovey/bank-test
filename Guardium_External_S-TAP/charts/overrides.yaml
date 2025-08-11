@@ -1,4 +1,5 @@
-global: {}
+global:
+  tag: "v11.5"
 
 estap:
   route:
