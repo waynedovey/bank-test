@@ -132,7 +132,7 @@ bash scripts/pg-loadtest.sh --viewer "http://<route>/" -T 60 -c 80 -j 4 -S
 bash scripts/pg-loadtest.sh --dsn "postgres://u:pw@host:8888/db" -T 30 -c 50
 ```
 
-> First time only, initialize pgbench tables: `bash scripts/pg-loadtest.sh --initialize -s 10 -T 60 -c 40`
+> First time only, initialize pgbench tables: `bash scripts/pg-loadtest.sh --initialize -s 10`
 
 ---
 
