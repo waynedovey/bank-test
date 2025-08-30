@@ -1,0 +1,198 @@
+// server.js
+const express = require('express');
+const { Pool } = require('pg');
+
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+// ---- PG env (injected by your deploy script) ----
+const PGHOST = process.env.PGHOST || 'localhost';
+const PGPORT = Number(process.env.PGPORT || 8888);
+const PGUSER = process.env.PGUSER || 'postgres';
+const PGPASSWORD = process.env.PGPASSWORD || '';
+const PGDATABASE = process.env.PGDATABASE || 'postgres';
+
+// ---- helpers ----
+function maskPassword(pw) {
+  if (!pw) return '';
+  if (pw.length <= 2) return Array(pw.length + 1).join('*');
+  return pw[0] + Array(Math.max(2, pw.length - 2) + 1).join('*') + pw[pw.length - 1];
+}
+function enc(v) { return encodeURIComponent(v || ''); }
+function h(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const PG_DSN_MASKED =
+  'postgresql://' + enc(PGUSER) + ':' + maskPassword(PGPASSWORD) + '@' +
+  PGHOST + ':' + PGPORT + '/' + enc(PGDATABASE);
+
+const PG_DSN_RAW =
+  'postgresql://' + enc(PGUSER) + ':' + enc(PGPASSWORD) + '@' +
+  PGHOST + ':' + PGPORT + '/' + enc(PGDATABASE);
+
+// ---- connection pool ----
+const pool = new Pool({
+  host: PGHOST,
+  port: PGPORT,
+  user: PGUSER,
+  password: PGPASSWORD,
+  database: PGDATABASE,
+  ssl: false,
+  max: 5,
+  idleTimeoutMillis: 10000,
+});
+
+// quick startup test so you see it in logs
+(async () => {
+  try {
+    await pool.query('SELECT 1');
+    console.log('[pg] initial connection OK');
+  } catch (e) {
+    console.error('[pg] initial connection FAILED:', e.message || e);
+  }
+})();
+
+app.get('/healthz', (_req, res) => res.status(200).send('OK'));
+
+// Server-side counters
+let totalHits = 0;
+const bootTime = new Date();
+
+// JSON endpoint for tables (optional)
+app.get('/api/tables', async (req, res) => {
+  const includeSystem = String(req.query.system || 'false').toLowerCase() === 'true';
+  const sql =
+    "SELECT table_schema, table_name \
+     FROM information_schema.tables \
+     WHERE table_type='BASE TABLE' " +
+    (includeSystem ? "" :
+     "AND table_schema NOT IN ('pg_catalog','information_schema') ") +
+    "ORDER BY table_schema, table_name LIMIT 1000";
+  try {
+    const q = await pool.query(sql);
+    res.json(q.rows);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get('/', async function (_req, res) {
+  totalHits++;
+
+  let ok = true;
+  let errorMsg = '';
+  let info = {};
+  let tables = [];
+
+  // session/server info
+  try {
+    const q = await pool.query(
+      'SELECT current_database() AS current_database, ' +
+      'inet_server_addr()::text AS server_ip, ' +
+      'inet_client_addr()::text AS client_ip, ' +
+      'now() AS now, version() AS version'
+    );
+    info = (q && q.rows && q.rows[0]) || {};
+  } catch (err) {
+    ok = false;
+    errorMsg = (err && err.message) ? String(err.message) : String(err);
+  }
+
+  // tables (non-system schemas)
+  try {
+    const qt = await pool.query(
+      "SELECT table_schema, table_name \
+       FROM information_schema.tables \
+       WHERE table_type='BASE TABLE' \
+         AND table_schema NOT IN ('pg_catalog','information_schema') \
+       ORDER BY table_schema, table_name LIMIT 1000"
+    );
+    tables = qt.rows || [];
+  } catch (e) {
+    // don’t flip status if info worked; just show an inline error
+    tables = [{ table_schema: 'ERROR', table_name: e.message || String(e) }];
+  }
+
+  const title = process.env.APP_TITLE || 'PostgreSQL Viewer (via E-STAP @ 8888)';
+
+  const rowsHtml = [
+    '<tr><th>current_database</th><td>', h(info.current_database), '</td></tr>',
+    '<tr><th>server_ip</th><td>', h(info.server_ip), '</td></tr>',
+    '<tr><th>client_ip</th><td>', h(info.client_ip), '</td></tr>',
+    '<tr><th>now</th><td>', h(info.now), '</td></tr>',
+    '<tr><th>version</th><td>', h(info.version), '</td></tr>',
+  ].join('');
+
+  const tablesHtml = tables.length
+    ? tables.map(r =>
+        '<tr><td>' + h(r.table_schema) + '</td><td>' + h(r.table_name) + '</td></tr>'
+      ).join('')
+    : '<tr><td colspan="2"><em>No tables found</em></td></tr>';
+
+  const html = [
+    '<!doctype html><html><head><meta charset="utf-8"/>',
+    '<title>', h(title), '</title>',
+    '<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;margin:2rem;line-height:1.4}',
+    'code,kbd,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}',
+    '.ok{color:#0a7f27;font-weight:600}.bad{color:#b00020;font-weight:600}',
+    'table{border-collapse:collapse;margin-top:.5rem}td,th{border:1px solid #ddd;padding:6px 10px}',
+    '.muted{color:#666}.box{padding:12px;border:1px solid #ddd;border-radius:8px;margin:.75rem 0}',
+    'details{cursor:pointer}',
+    '</style></head><body>',
+    '<h1>', h(title), '</h1>',
+
+    '<div class="box"><strong>Connection target</strong><br/>',
+    'Host: <code>', h(PGHOST), '</code><br/>',
+    'Port: <code>', h(PGPORT), '</code><br/>',
+    'DB: <code>', h(PGDATABASE), '</code><br/>',
+    'User: <code>', h(PGUSER), '</code><br/>',
+    '</div>',
+
+    '<div class="box"><strong>Connection string (masked)</strong><br/>',
+    '<code>', h(PG_DSN_MASKED), '</code>',
+    '<div class="muted">(* password masked; server boot: ', h(bootTime.toISOString()), ')</div>',
+    '</div>',
+
+    '<div class="box"><details><summary>Show full connection string (reveals password)</summary>',
+    '<div style="margin-top:.5rem"><code>', h(PG_DSN_RAW), '</code></div>',
+    '</details></div>',
+
+    '<div class="box"><strong>Counters</strong><br/>',
+    'Server hits since boot: <code>', h(totalHits), '</code><br/>',
+    'Your refresh count: <code id="refreshCount">…</code>',
+    '</div>',
+
+    '<h2>Status</h2><p>',
+    ok ? '<span class="ok">Connected ✓</span>' :
+         '<span class="bad">Failed ✗</span> — ' + h(errorMsg),
+    '</p>',
+
+    '<h2>Session / Server info</h2>',
+    '<table><tbody>', rowsHtml, '</tbody></table>',
+
+    '<h2>Tables (non-system schemas)</h2>',
+    '<div class="muted">Up to 1000 tables shown. JSON at <code>/api/tables</code>.</div>',
+    '<table><thead><tr><th>schema</th><th>table</th></tr></thead><tbody>',
+    tablesHtml, '</tbody></table>',
+
+    '<script>',
+    'try{var k="pg_viewer_refresh_count";var n=parseInt(localStorage.getItem(k)||"0",10);',
+    'if(!isFinite(n)) n=0; n+=1; localStorage.setItem(k,String(n));',
+    'document.getElementById("refreshCount").textContent=String(n);}catch(e){',
+    'document.getElementById("refreshCount").textContent="unavailable";}',
+    '</script>',
+
+    '</body></html>'
+  ].join('');
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(html);
+});
+
+app.listen(PORT, function () {
+  console.log('pg-viewer listening on http://0.0.0.0:' + PORT);
+  console.log('Target DSN (masked): ' + PG_DSN_MASKED);
+});

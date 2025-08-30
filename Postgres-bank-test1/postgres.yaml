@@ -1,0 +1,102 @@
+# 1) Init SQL that enables verbose logging to container logs (stderr)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-sql
+  namespace: bank-test1
+data:
+  10-logging.sql: |
+    -- send logs to container logs
+    ALTER SYSTEM SET log_destination = 'stderr';
+    ALTER SYSTEM SET client_min_messages = 'log';
+    ALTER SYSTEM SET log_line_prefix = '%m [%p] %u@%d ';
+    -- log everything (or use 'mod' for DDL+writes only)
+    ALTER SYSTEM SET log_statement = 'all';
+    SELECT pg_reload_conf();
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: bank-test1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16
+        env:
+        - name: POSTGRES_USER
+          value: testuser1
+        - name: POSTGRES_PASSWORD
+          value: testpassword
+        - name: POSTGRES_DB
+          value: testdb1
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: init-sql
+          mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
+        # (nice to have) probes so OpenShift waits until PG is ready
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -lc
+            - pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -lc
+            - pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 20
+          periodSeconds: 10
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-sql
+        configMap:
+          name: postgres-init-sql
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: bank-test1
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: bank-test1
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP

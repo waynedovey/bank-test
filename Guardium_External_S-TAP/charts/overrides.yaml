@@ -1,0 +1,40 @@
+global: {}
+
+estap:
+  route:
+    name: apps.acm.sandbox1544.opentlc.com
+
+  replicas: 2
+  serviceAccountName: estap
+  uid: 1000
+  fsGroup: 1000
+  supplementalGroups: 1000
+
+  uid: null
+  fsGroup: null
+  supplementalGroups: null
+
+  proxy:
+    debug: 4
+    tap_log_dir: "/tmp/"
+
+  db:
+    host: "postgres.bank-test.svc.cluster.local"
+    port: 5432
+    type: "pgsql"
+
+  guardium:
+    #host: "3.107.184.204"
+    host: "52.63.20.133"
+
+  livenessProbe:
+    command: "/usr/sbin/gproxy_live"
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    failureThreshold: 4
+
+  readinessProbe:
+    command: "/usr/sbin/gproxy_ready"
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    failureThreshold: 5

@@ -1,0 +1,49 @@
+global: {}
+
+estap:
+  name: estap-bank2
+  #route:
+  #  name: apps.acm.sandbox1544.opentlc.com
+  service:
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"           # NLB
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip" # targets are pods
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing" # or "internal"
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    externalTrafficPolicy: Cluster         # usually best for TCP proxy
+    #loadBalancerSourceRanges: ["x.y.z.0/24","a.b.c.d/32"]  # optional restrictors
+
+  replicas: 2
+  serviceAccountName: estap
+  uid: 1000
+  fsGroup: 1000
+  supplementalGroups: 1000
+
+  uid: null
+  fsGroup: null
+  supplementalGroups: null
+
+  proxy:
+    debug: 4
+    tap_log_dir: "/tmp/"
+
+  db:
+    host: "postgres.bank-test2.svc.cluster.local"
+    port: 5432
+    type: "pgsql"
+
+  guardium:
+    #host: "3.107.184.204"
+    host: "52.63.20.133"
+
+  livenessProbe:
+    command: "/usr/sbin/gproxy_live"
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    failureThreshold: 4
+
+  readinessProbe:
+    command: "/usr/sbin/gproxy_ready"
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    failureThreshold: 5
